@@ -1,0 +1,25 @@
+[project]
+name = "social-media-agent"
+version = "0.1.0"
+description = "Social media agent for Notion, OpenRouter, and Mastodon integration"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "notion-client>=2.2.1",
+    "openai>=1.12.0",
+    "Mastodon.py>=1.8.1",
+    "pydantic>=2.5.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.7.0",
+    "typer>=0.9.0",
+]
+
+[project.scripts]
+social-media-agent = "src.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
