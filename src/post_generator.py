@@ -11,6 +11,7 @@ from rich.prompt import Prompt, Confirm
 from .notion_client import NotionClientWrapper
 from .llm_client import LLMClient
 from .mastodon_client import MastodonClient
+from .image_client import ImageClient
 
 console = Console()
 
@@ -23,18 +24,29 @@ class PostGenerator:
         self.notion_client = NotionClientWrapper()
         self.llm_client = LLMClient()
         self.mastodon_client = MastodonClient()
+        try:
+            self.image_client = ImageClient()
+        except ValueError:
+            self.image_client = None  # No Replicate token configured
     
-    def create_and_publish_post(self, dry_run: bool = False) -> bool:
+    def create_and_publish_post(
+        self,
+        dry_run: bool = False,
+        with_image: bool = False,
+        use_telegram: bool = False
+    ) -> bool:
         """
         Full workflow: Fetch from Notion → Generate → Review → Publish.
         
         Args:
             dry_run: If True, don't actually post to Mastodon
+            with_image: If True, generate an image for the post
+            use_telegram: If True, use Telegram for HITL approval
             
         Returns:
             True if successful, False otherwise
         """
-        console.print("\n[bold cyan]🤖 Social Media Post Generator[/bold cyan]\n")
+        console.print("\n[bold cyan]Social Media Post Generator[/bold cyan]\n")
         
         # Step 1: Fetch content from Notion
         console.print("[bold]Step 1:[/bold] Fetching content from Notion...")
@@ -62,24 +74,37 @@ class PostGenerator:
         
         console.print("[green]✓ Post generated![/green]")
         
-        # Step 3: Review and edit
-        final_post = self._review_and_edit(generated_post)
+        # Step 3: Generate image (optional)
+        image_path = None
+        if with_image:
+            image_path = self._generate_post_image(notion_content, generated_post)
+        
+        # Step 4: Review and edit (Telegram or CLI)
+        if use_telegram:
+            final_post, image_path = self._telegram_approval(
+                notion_content,
+                generated_post,
+                image_path
+            )
+        else:
+            final_post = self._review_and_edit(generated_post, image_path)
         
         if not final_post:
             console.print("[yellow]Post creation cancelled.[/yellow]")
             return False
         
-        # Step 4: Publish to Mastodon
-        console.print("\n[bold]Step 4:[/bold] Publishing to Mastodon...")
+        # Step 5: Publish to Mastodon
+        console.print("\n[bold]Step 5:[/bold] Publishing to Mastodon...")
         
         status = self.mastodon_client.post_status(
             final_post,
             add_ai_label=True,
-            dry_run=dry_run
+            dry_run=dry_run,
+            media_path=image_path
         )
         
         if not dry_run and status:
-            # Step 5: Add comment to Notion (optional tracking)
+            # Step 6: Add comment to Notion (optional tracking)
             console.print("\n[bold]Step 5:[/bold] Adding comment to Notion...")
             post_url = status.get('url', 'N/A')
             comment = f"Posted to Mastodon: {post_url}"
@@ -90,17 +115,91 @@ class PostGenerator:
         
         return True
     
-    def _review_and_edit(self, generated_post: str) -> Optional[str]:
+    def _generate_post_image(self, notion_content, post_text: str) -> Optional[str]:
+        """
+        Generate an image for the post.
+        
+        Args:
+            notion_content: Notion content object
+            post_text: Generated post text
+            
+        Returns:
+            Path to generated image, or None if failed/disabled
+        """
+        if not self.image_client:
+            console.print("[yellow]⚠ Image generation skipped (no Replicate token)[/yellow]")
+            return None
+        
+        console.print("\n[bold]Step 3:[/bold] Generating image...")
+        
+        # Extract image prompt from content
+        image_prompt = self.image_client.extract_image_prompt_from_text(
+            f"{notion_content.title}. {post_text}"
+        )
+        
+        console.print(f"[dim]Image prompt: {image_prompt}[/dim]")
+        
+        # Generate image
+        image_path = self.image_client.generate_image(
+            prompt=image_prompt,
+            include_trigger=True
+        )
+        
+        if image_path:
+            console.print(f"[green]✓ Image generated successfully![/green]")
+        else:
+            console.print("[yellow]⚠ Image generation failed, continuing without image[/yellow]")
+        
+        return image_path
+    
+    def _telegram_approval(
+        self,
+        notion_content,
+        generated_post: str,
+        image_path: Optional[str]
+    ) -> tuple[Optional[str], Optional[str]]:
+        """
+        Use Telegram for HITL approval.
+        
+        Args:
+            notion_content: Notion content object
+            generated_post: Generated post text
+            image_path: Path to generated image
+            
+        Returns:
+            Tuple of (final_post, final_image_path) or (None, None) if cancelled
+        """
+        import asyncio
+        from .hitl_approval import HITLApprovalLoop
+        
+        try:
+            loop = HITLApprovalLoop()
+            final_post, final_image = asyncio.run(
+                loop.run_approval_loop(
+                    notion_content=notion_content,
+                    initial_text=generated_post,
+                    initial_image_path=image_path
+                )
+            )
+            return final_post, final_image
+        except ValueError as e:
+            console.print(f"[red]Telegram not configured: {e}[/red]")
+            console.print("[yellow]Falling back to CLI approval...[/yellow]")
+            return self._review_and_edit(generated_post, image_path), image_path
+    
+    def _review_and_edit(self, generated_post: str, image_path: Optional[str] = None) -> Optional[str]:
         """
         Show the generated post and allow user to review/edit it.
         
         Args:
             generated_post: The AI-generated post text
+            image_path: Optional path to generated image
             
         Returns:
             Final post text or None if cancelled
         """
-        console.print("\n[bold]Step 3:[/bold] Review and Edit")
+        step_num = "4" if image_path else "3"
+        console.print(f"\n[bold]Step {step_num}:[/bold] Review and Edit")
         
         current_post = generated_post
         
@@ -108,7 +207,13 @@ class PostGenerator:
             # Show the current post
             console.print("\n[bold]Generated Post:[/bold]")
             console.print(Panel(current_post, border_style="green"))
-            console.print(f"[dim]Character count: {len(current_post)}[/dim]\n")
+            console.print(f"[dim]Character count: {len(current_post)}[/dim]")
+            
+            if image_path:
+                console.print(f"[cyan]📷 Image:[/cyan] {image_path}")
+                console.print(f"[dim]Preview: file:///{image_path}[/dim]")
+            
+            console.print()
             
             # Ask what to do
             console.print("[bold]Options:[/bold]")

@@ -7,6 +7,8 @@ An automated social media agent that pulls content from Notion, generates posts 
 - 📝 **Notion Integration**: Fetch content from your Notion page
 - 🤖 **AI-Powered Generation**: Use OpenRouter's free Nvidia Nemotron model to generate social media posts
 - ✏️ **Human-in-the-Loop**: Review and edit posts before publishing
+- 📱 **Telegram Approval**: Interactive post approval via Telegram bot with unlimited refinement iterations
+- 🎨 **Image Generation**: Generate custom images using FLUX models trained on your dataset
 - 🔍 **Smart Replies**: Find keyword-related posts and generate contextual replies
 - 📊 **Structured Outputs**: Use Pydantic for reliable, structured AI responses
 - 🏷️ **Transparency**: Automatically label AI-generated content
@@ -45,6 +47,11 @@ Edit `.env` and add your credentials:
 - **MASTODON_ACCESS_TOKEN**: Your Mastodon access token
 - **MASTODON_KEYWORDS**: Keywords to search for (comma-separated)
 - **AI_LABEL**: Label to add to AI-generated posts (default: #AIGenerated)
+- **TELEGRAM_BOT_TOKEN**: Your Telegram bot token (optional, for HITL approval)
+- **TELEGRAM_CHAT_ID**: Your Telegram chat ID (optional, for HITL approval)
+- **REPLICATE_API_TOKEN**: Your Replicate API token (optional, for image generation)
+- **FLUX_MODEL_ID**: Your trained FLUX model ID (optional)
+- **FLUX_TRIGGER_WORD**: Your model's trigger word (optional)
 
 ### 3. Set Up Your Notion Page
 
@@ -57,18 +64,47 @@ Simply create a Notion page with all your content:
 
 ### Create and Publish a Post
 
-Fetch content from Notion, generate a post, review/edit, and publish:
+**Option 1: Telegram Approval (Recommended)**
+
+```bash
+uv run python -m src.main telegram-post
+```
+
+Review and refine your post interactively from your phone! You can:
+- Edit text directly
+- Regenerate images with feedback
+- Regenerate text with feedback
+- Keep iterating until perfect
+- Approve to publish
+
+**Option 2: CLI Approval**
 
 ```bash
 uv run python -m src.main create-post
 ```
 
-This will:
+**Option 3: With Image**
+
+```bash
+uv run python -m src.main create-post --with-image
+# or
+uv run python -m src.main telegram-post
+```
+
+**Option 4: Dry Run (Test)**
+
+```bash
+uv run python -m src.main create-post --dry-run
+uv run python -m src.main telegram-post --dry-run
+```
+
+All commands will:
 1. Fetch content from your Notion page
 2. Generate a social media post using AI
-3. Show you the post for review and editing
-4. Publish to Mastodon with an AI-generated label
-5. Add a comment to your Notion page with the post URL
+3. (Optional) Generate a custom TANGO image
+4. Show you the post for review and editing
+5. Publish to Mastodon with an AI-generated label
+6. Add a comment to your Notion page with the post URL
 
 ### Reply to Keyword Posts
 
@@ -84,13 +120,18 @@ This will:
 3. Show you all replies in a table for review
 4. Publish approved replies
 
-### Dry Run Mode
+### Additional Commands
 
-Test without actually posting:
+**Generate Standalone Image**
 
 ```bash
-uv run python -m src.main create-post --dry-run
-uv run python -m src.main reply-to-posts --count 5 --dry-run
+uv run python -m src.main generate-image "your prompt here"
+```
+
+**Train FLUX Model**
+
+```bash
+uv run python -m src.main train-model --username your-username --model-name your-model
 ```
 
 ## Project Structure
@@ -102,6 +143,9 @@ Social-Media-Agent/
 ├── .env                    # Your actual API keys (gitignored)
 ├── .gitignore             # Git ignore file
 ├── README.md              # This file
+├── QUICKSTART.md          # Quick start guide
+├── IMAGE_GENERATION_GUIDE.md  # Image generation guide
+├── TELEGRAM_HITL_GUIDE.md    # Telegram HITL guide
 ├── src/
 │   ├── __init__.py
 │   ├── main.py            # CLI entry point
@@ -110,18 +154,32 @@ Social-Media-Agent/
 │   ├── mastodon_client.py # Mastodon API wrapper
 │   ├── post_generator.py  # Post generation logic
 │   ├── reply_generator.py # Reply generation logic
+│   ├── telegram_client.py # Telegram bot client
+│   ├── hitl_approval.py   # HITL approval loop
+│   ├── image_client.py    # Replicate/FLUX image generation
 │   └── models.py          # Pydantic models
+├── scripts/
+│   ├── annotate_dataset.py  # Dataset annotation tool
+│   └── train_flux_model.py  # Model training script
 └── tests/
     └── __init__.py
 ```
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.10-3.13
 - API keys for:
-  - Notion
-  - OpenRouter
-  - Mastodon
+  - Notion (required)
+  - OpenRouter (required)
+  - Mastodon (required)
+  - Telegram (optional, for HITL approval)
+  - Replicate (optional, for image generation)
+
+## Documentation
+
+- [Quick Start Guide](QUICKSTART.md) - Detailed setup instructions
+- [Image Generation Guide](IMAGE_GENERATION_GUIDE.md) - Image generation and model training
+- [Telegram HITL Guide](TELEGRAM_HITL_GUIDE.md) - Interactive post approval via Telegram
 
 ## License
 

@@ -18,8 +18,11 @@ T = TypeVar('T', bound=BaseModel)
 class LLMClient:
     """Wrapper for OpenRouter API."""
     
-    # Nvidia Nemotron model
-    MODEL = "nvidia/nemotron-3-nano-30b-a3b"
+    # Switching to Meta Llama - typically less rate-limited on free tier
+    # Previous attempts:
+    # - nvidia/nemotron-3-nano-30b-a3b (empty responses)
+    # - google/gemini-2.0-flash-exp:free (429 rate limited)
+    MODEL = "meta-llama/llama-3.2-3b-instruct:free"
     
     def __init__(self):
         """Initialize the OpenRouter client with API key from environment."""
@@ -34,17 +37,45 @@ class LLMClient:
             api_key=self.api_key
         )
     
-    def generate_post(self, content: str) -> str:
+    def generate_post(
+        self,
+        content: str,
+        feedback: Optional[str] = None,
+        previous_attempt: Optional[str] = None
+    ) -> str:
         """
-        Generate a social media post from content.
+        Generate a social media post from content with optional feedback.
         
         Args:
             content: The source content to create a post from
+            feedback: Optional feedback for improvement
+            previous_attempt: Previous version to improve upon
             
         Returns:
             Generated social media post text
         """
-        prompt = f"""You are a social media expert. Create an engaging social media post based on the following content.
+        if feedback and previous_attempt:
+            prompt = f"""You are a social media expert. Improve the following social media post based on user feedback.
+
+Original Content:
+{content}
+
+Previous Post:
+{previous_attempt}
+
+User Feedback:
+{feedback}
+
+Requirements:
+- Address the user's feedback
+- Keep it concise and engaging (suitable for Mastodon, under 500 characters)
+- Use a professional yet friendly tone
+- Include 2-3 relevant hashtags
+- Make it shareable and interesting
+
+Generate the improved post:"""
+        else:
+            prompt = f"""You are a social media expert. Create an engaging social media post based on the following content.
 
 Content:
 {content}
@@ -58,6 +89,12 @@ Requirements:
 Generate the post:"""
         
         try:
+            # #region agent log
+            import json as _json
+            with open(r'c:\Users\start\Desktop\6.S093\Social-Media-Agent\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+                _f.write(_json.dumps({"location":"llm_client.py:88","message":"generate_post entry","data":{"model":self.MODEL,"api_key_prefix":self.api_key[:10] if self.api_key else None,"prompt_length":len(prompt),"has_feedback":feedback is not None},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session","hypothesisId":"A,B"}) + '\n')
+            # #endregion
+            
             response = self.client.chat.completions.create(
                 model=self.MODEL,
                 messages=[
@@ -68,9 +105,28 @@ Generate the post:"""
                 max_tokens=500
             )
             
-            return response.choices[0].message.content.strip()
+            # #region agent log
+            with open(r'c:\Users\start\Desktop\6.S093\Social-Media-Agent\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+                _raw_content = response.choices[0].message.content if response.choices and response.choices[0].message else None
+                _response_dict = response.model_dump() if hasattr(response, 'model_dump') else str(response)
+                _f.write(_json.dumps({"location":"llm_client.py:104","message":"API response received","data":{"has_choices":bool(response.choices),"choices_count":len(response.choices) if response.choices else 0,"raw_content":_raw_content,"raw_content_type":str(type(_raw_content)),"raw_content_length":len(_raw_content) if _raw_content else 0,"finish_reason":response.choices[0].finish_reason if response.choices else None,"response_id":response.id if hasattr(response,'id') else None},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session","hypothesisId":"A,D"}) + '\n')
+            # #endregion
+            
+            result = response.choices[0].message.content.strip()
+            
+            # #region agent log
+            with open(r'c:\Users\start\Desktop\6.S093\Social-Media-Agent\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+                _f.write(_json.dumps({"location":"llm_client.py:113","message":"generate_post exit","data":{"result":result,"result_length":len(result) if result else 0,"is_empty":not bool(result)},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session","hypothesisId":"A,E"}) + '\n')
+            # #endregion
+            
+            return result
         
         except Exception as e:
+            # #region agent log
+            import json as _json
+            with open(r'c:\Users\start\Desktop\6.S093\Social-Media-Agent\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+                _f.write(_json.dumps({"location":"llm_client.py:122","message":"generate_post exception","data":{"error_type":type(e).__name__,"error_msg":str(e)},"timestamp":__import__('time').time()*1000,"sessionId":"debug-session","hypothesisId":"C"}) + '\n')
+            # #endregion
             console.print(f"[red]Error generating post: {e}[/red]")
             raise
     

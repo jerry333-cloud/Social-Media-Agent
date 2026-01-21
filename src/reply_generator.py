@@ -42,7 +42,7 @@ class ReplyGenerator:
         Returns:
             True if successful, False otherwise
         """
-        console.print("\n[bold cyan]🤖 Social Media Reply Generator[/bold cyan]\n")
+        console.print("\n[bold cyan]Social Media Reply Generator[/bold cyan]\n")
         
         # Step 1: Search for posts
         console.print(f"[bold]Step 1:[/bold] Searching for posts with keywords: {', '.join(self.keywords)}")

@@ -31,14 +31,21 @@ class MastodonClient:
             api_base_url=self.instance_url
         )
     
-    def post_status(self, content: str, add_ai_label: bool = True, dry_run: bool = False) -> Optional[Dict]:
+    def post_status(
+        self,
+        content: str,
+        add_ai_label: bool = True,
+        dry_run: bool = False,
+        media_path: Optional[str] = None
+    ) -> Optional[Dict]:
         """
-        Post a status to Mastodon.
+        Post a status to Mastodon with optional media attachment.
         
         Args:
             content: The content to post
             add_ai_label: Whether to add the AI-generated label
             dry_run: If True, don't actually post
+            media_path: Optional path to image file to attach
             
         Returns:
             The posted status object or None if dry_run
@@ -55,11 +62,22 @@ class MastodonClient:
         if dry_run:
             console.print("[yellow]DRY RUN - Would post:[/yellow]")
             console.print(f"[dim]{content}[/dim]")
+            if media_path:
+                console.print(f"[yellow]With image:[/yellow] {media_path}")
             return None
         
         try:
-            status = self.client.status_post(content)
+            media_ids = None
+            
+            # Upload media if provided
+            if media_path:
+                media_ids = self._upload_media(media_path)
+            
+            # Post status
+            status = self.client.status_post(content, media_ids=media_ids)
             console.print("[green]✓ Posted to Mastodon successfully![/green]")
+            if media_path:
+                console.print("[green]✓ Image attached![/green]")
             return status
         
         except Exception as e:
@@ -143,6 +161,32 @@ class MastodonClient:
         except Exception as e:
             console.print(f"[red]Error replying to post {post_id}: {e}[/red]")
             raise
+    
+    def _upload_media(self, media_path: str, description: str = None) -> List[Dict]:
+        """
+        Upload media file to Mastodon.
+        
+        Args:
+            media_path: Path to the media file
+            description: Optional alt text description
+            
+        Returns:
+            List of media IDs
+        """
+        try:
+            import os
+            if not os.path.exists(media_path):
+                console.print(f"[red]Media file not found: {media_path}[/red]")
+                return None
+            
+            console.print(f"[yellow]Uploading image...[/yellow]")
+            media = self.client.media_post(media_path, description=description)
+            console.print(f"[green]✓ Image uploaded[/green]")
+            return [media["id"]]
+        
+        except Exception as e:
+            console.print(f"[red]Error uploading media: {e}[/red]")
+            return None
     
     def _strip_html(self, html_content: str) -> str:
         """Remove HTML tags from content."""

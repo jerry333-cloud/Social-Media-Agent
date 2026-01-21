@@ -1,7 +1,7 @@
 """Pydantic models for structured outputs."""
 
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 
 
 class SocialMediaPost(BaseModel):
@@ -13,6 +13,14 @@ class SocialMediaPost(BaseModel):
     hashtags: List[str] = Field(
         default_factory=list,
         description="List of relevant hashtags for the post"
+    )
+    image_prompt: Optional[str] = Field(
+        default=None,
+        description="Optional prompt for generating an accompanying image"
+    )
+    should_generate_image: bool = Field(
+        default=False,
+        description="Whether to generate an image for this post"
     )
 
 
