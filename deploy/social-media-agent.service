@@ -1,0 +1,17 @@
+[Unit]
+Description=Social Media Agent FastAPI Service
+After=network.target
+
+[Service]
+Type=simple
+User=start
+WorkingDirectory=/home/start/Social-Media-Agent
+Environment="PATH=/home/start/Social-Media-Agent/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/start/Social-Media-Agent/.venv/bin/uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

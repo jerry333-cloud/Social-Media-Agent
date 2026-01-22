@@ -2,6 +2,8 @@
 
 An automated social media agent that pulls content from Notion, generates posts using AI (OpenRouter's Nvidia Nemotron model), and publishes to Mastodon with human oversight.
 
+**Now with Cloud Deployment!** Deploy as a production-ready FastAPI service on GCP with automated scheduling, REST API, and persistent operation.
+
 ## Features
 
 - 📝 **Notion Integration**: Fetch content from your Notion page
@@ -12,6 +14,10 @@ An automated social media agent that pulls content from Notion, generates posts 
 - 🔍 **Smart Replies**: Find keyword-related posts and generate contextual replies
 - 📊 **Structured Outputs**: Use Pydantic for reliable, structured AI responses
 - 🏷️ **Transparency**: Automatically label AI-generated content
+- ☁️ **Cloud Deployment**: Deploy to GCP with FastAPI, automated scheduling, and REST API
+- ⏰ **Automated Scheduling**: Schedule posts using cron expressions
+- 🗄️ **Persistent Storage**: SQLite database for post history and configuration
+- 📡 **REST API**: Full API for programmatic access and integration
 
 ## Setup
 
@@ -60,9 +66,38 @@ Simply create a Notion page with all your content:
 - Share the page with your Notion integration
 - Get the page ID from the URL (the long string after the last `/`)
 
+## Deployment Options
+
+### Option 1: Cloud Deployment (Production)
+
+Deploy as a FastAPI service on Google Cloud Platform with automated scheduling:
+
+```bash
+# See full deployment guide
+cat DEPLOYMENT_GUIDE.md
+
+# Quick deploy
+cd ~/Social-Media-Agent
+./deploy/setup.sh
+```
+
+Features:
+- **REST API**: Access via HTTP endpoints
+- **Automated Scheduling**: Cron-based post scheduling
+- **Persistent Operation**: Systemd service auto-restarts
+- **Web Dashboard**: Interactive API docs at `/docs`
+
+📚 **[Full Deployment Guide](DEPLOYMENT_GUIDE.md)** | 📖 **[API Documentation](API_DOCUMENTATION.md)**
+
+### Option 2: Local CLI (Development)
+
+Run commands locally for development and testing.
+
 ## Usage
 
-### Create and Publish a Post
+### CLI Usage (Local)
+
+#### Create and Publish a Post
 
 **Option 1: Telegram Approval (Recommended)**
 
@@ -133,6 +168,40 @@ uv run python -m src.main generate-image "your prompt here"
 ```bash
 uv run python -m src.main train-model --username your-username --model-name your-model
 ```
+
+### API Usage (Cloud)
+
+Once deployed, use the REST API:
+
+```bash
+# Create a post
+curl -X POST http://YOUR_VM_IP:8000/api/posts/create \
+  -H "Content-Type: application/json" \
+  -d '{"with_image": true, "dry_run": false}'
+
+# Create post with Telegram approval
+curl -X POST http://YOUR_VM_IP:8000/api/posts/create-with-hitl \
+  -H "Content-Type: application/json" \
+  -d '{"with_image": true}'
+
+# Schedule daily posts at 9 AM
+curl -X POST http://YOUR_VM_IP:8000/api/schedules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Daily Morning Post",
+    "cron_expression": "0 9 * * *",
+    "with_image": true,
+    "enabled": true
+  }'
+
+# List all posts
+curl http://YOUR_VM_IP:8000/api/posts
+
+# Check API health
+curl http://YOUR_VM_IP:8000/health
+```
+
+**Interactive API Documentation:** http://YOUR_VM_IP:8000/docs
 
 ## Project Structure
 

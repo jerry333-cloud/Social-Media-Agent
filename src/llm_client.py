@@ -21,8 +21,8 @@ class LLMClient:
     # Switching to Meta Llama - typically less rate-limited on free tier
     # Previous attempts:
     # - nvidia/nemotron-3-nano-30b-a3b (empty responses)
-    # - google/gemini-2.0-flash-exp:free (429 rate limited)
-    MODEL = "meta-llama/llama-3.2-3b-instruct:free"
+    # - google/gemini-2.0-flash-exp (429 rate limited)
+    MODEL = "nvidia/nemotron-3-nano-30b-a3b"
     
     def __init__(self):
         """Initialize the OpenRouter client with API key from environment."""

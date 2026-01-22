@@ -217,3 +217,27 @@ class TelegramClient:
             chat_id=self.chat_id,
             text="Post cancelled. Nothing was published."
         )
+
+
+# Background bot for API usage
+_background_bot = None
+_background_app = None
+
+
+def start_telegram_bot():
+    """
+    Start Telegram bot in background for API usage.
+    Note: This is a placeholder for future enhancement.
+    The bot is currently used synchronously in HITL approval flow.
+    """
+    import logging
+    logging.getLogger(__name__).info("Telegram bot initialized for HITL approval")
+
+
+def stop_telegram_bot():
+    """
+    Stop background Telegram bot.
+    Note: This is a placeholder for future enhancement.
+    """
+    import logging
+    logging.getLogger(__name__).info("Telegram bot shutdown complete")
