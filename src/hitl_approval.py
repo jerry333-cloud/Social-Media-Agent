@@ -188,3 +188,86 @@ class HITLApprovalLoop:
             
             # Continue loop
             console.print(f"[dim]Iteration {state.iteration} complete. Showing new preview...[/dim]\n")
+    
+    async def run_reply_approval_loop(
+        self,
+        original_post: str,
+        initial_reply: str,
+        post_author: str = ""
+    ) -> Optional[str]:
+        """
+        Run approval loop for a reply.
+        
+        Args:
+            original_post: The original post being replied to
+            initial_reply: Initial generated reply text
+            post_author: Author of the original post
+            
+        Returns:
+            Final reply text or None if cancelled
+        """
+        console.print("\n[bold cyan]Starting Telegram HITL Reply Approval Loop[/bold cyan]\n")
+        
+        current_reply = initial_reply
+        iteration = 1
+        
+        while True:
+            # Send reply to Telegram for approval
+            await self.telegram_client.send_reply_for_approval(
+                original_post=original_post,
+                reply_text=current_reply,
+                post_author=post_author,
+                iteration=iteration
+            )
+            
+            # Wait for user decision
+            action = await self.telegram_client.wait_for_button_response()
+            
+            console.print(f"[yellow]User action: {action}[/yellow]")
+            
+            if action == "approve":
+                console.print("[green]Reply approved! Proceeding to post...[/green]")
+                return current_reply
+            
+            elif action == "cancel":
+                console.print("[yellow]Reply cancelled by user[/yellow]")
+                await self.telegram_client.send_cancellation_message()
+                return None
+            
+            elif action == "edit_text":
+                new_text = await self.telegram_client.ask_for_text(
+                    "Send me your edited reply:"
+                )
+                current_reply = new_text
+                iteration += 1
+            
+            elif action == "regen_text":
+                feedback = await self.telegram_client.ask_for_feedback(
+                    "What would you like to change about the reply?"
+                )
+                
+                console.print(f"[cyan]Regenerating reply with feedback: {feedback}[/cyan]")
+                
+                # Regenerate reply with feedback
+                # Use generate_post with feedback for regeneration
+                prompt = f"""Improve this reply based on user feedback.
+
+Original Post:
+{original_post}
+
+Previous Reply:
+{current_reply}
+
+User Feedback:
+{feedback}
+
+Generate an improved reply (max 200 characters):"""
+                
+                new_reply_text = self.llm_client.generate_post(prompt)
+                new_reply = {'reply_text': new_reply_text}
+                
+                if new_reply:
+                    current_reply = new_reply.get('reply_text', current_reply)
+                iteration += 1
+            
+            console.print(f"[dim]Iteration {iteration} complete. Showing new preview...[/dim]\n")

@@ -42,13 +42,15 @@ def create_post(
     4. Publish to Mastodon with an AI-generated label
     5. Update the Notion database status
     """
+    import asyncio
+    
     try:
         generator = PostGenerator()
-        success = generator.create_and_publish_post(
+        success = asyncio.run(generator.create_and_publish_post(
             dry_run=dry_run,
             with_image=with_image,
             use_telegram=telegram
-        )
+        ))
         
         if not success:
             raise typer.Exit(code=1)

@@ -2,9 +2,9 @@
 
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, Float, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker, Session, relationship
 from contextlib import contextmanager
 import os
 
@@ -28,6 +28,11 @@ class Post(Base):
     published_at = Column(DateTime, nullable=True)
     mastodon_url = Column(String, nullable=True)
     error_message = Column(Text, nullable=True)
+    # RAG fields
+    context_chunk_ids = Column(Text, nullable=True)  # JSON array of chunk IDs used
+    retrieval_scores = Column(Text, nullable=True)  # JSON array of scores
+    is_reply = Column(Boolean, default=False)
+    parent_post_id = Column(Integer, nullable=True)
 
 
 class Schedule(Base):
@@ -63,10 +68,50 @@ class Config(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+# RAG Models
+class Chunk(Base):
+    """Text chunk model for RAG."""
+    __tablename__ = "chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    page_id = Column(String, nullable=False, index=True)  # Notion page ID
+    chunk_index = Column(Integer, nullable=False)  # Position in page
+    content = Column(Text, nullable=False)
+    token_count = Column(Integer, nullable=False)
+    source_type = Column(String, default="notion")  # notion, approved_post, approved_reply
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RetrievalLog(Base):
+    """Log of retrieval operations for quality tracking."""
+    __tablename__ = "retrieval_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    query = Column(Text, nullable=False)
+    chunks_used = Column(Text, nullable=True)  # JSON array of chunk IDs
+    post_id = Column(Integer, ForeignKey("posts.id"), nullable=True)
+    avg_score = Column(Float, nullable=True)
+    min_score = Column(Float, nullable=True)
+    max_score = Column(Float, nullable=True)
+    retrieval_type = Column(String, default="hybrid")  # hybrid, bm25_only, vector_only
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 # Database initialization
 def init_db():
     """Initialize database tables."""
     Base.metadata.create_all(bind=engine)
+    
+    # Initialize FTS5 and vector tables
+    try:
+        from src.rag.bm25_search import BM25Search
+        from src.rag.vector_store import VectorStore
+        BM25Search()
+        VectorStore()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Could not initialize RAG tables: {e}")
 
 
 # Database session management
@@ -266,3 +311,81 @@ class ConfigCRUD:
             db.commit()
             return True
         return False
+
+
+# CRUD Operations for Chunks
+class ChunkCRUD:
+    @staticmethod
+    def create(db: Session, page_id: str, chunk_index: int, content: str, token_count: int, source_type: str = "notion") -> Chunk:
+        """Create a new chunk."""
+        chunk = Chunk(
+            page_id=page_id,
+            chunk_index=chunk_index,
+            content=content,
+            token_count=token_count,
+            source_type=source_type
+        )
+        db.add(chunk)
+        db.commit()
+        db.refresh(chunk)
+        return chunk
+
+    @staticmethod
+    def get(db: Session, chunk_id: int) -> Optional[Chunk]:
+        """Get a chunk by ID."""
+        return db.query(Chunk).filter(Chunk.id == chunk_id).first()
+
+    @staticmethod
+    def get_by_page(db: Session, page_id: str) -> List[Chunk]:
+        """Get all chunks for a page."""
+        return db.query(Chunk).filter(Chunk.page_id == page_id).order_by(Chunk.chunk_index).all()
+
+    @staticmethod
+    def delete_by_page(db: Session, page_id: str) -> int:
+        """Delete all chunks for a page. Returns count deleted."""
+        chunks = db.query(Chunk).filter(Chunk.page_id == page_id).all()
+        count = len(chunks)
+        for chunk in chunks:
+            db.delete(chunk)
+        db.commit()
+        return count
+
+    @staticmethod
+    def get_by_ids(db: Session, chunk_ids: List[int]) -> List[Chunk]:
+        """Get chunks by IDs."""
+        return db.query(Chunk).filter(Chunk.id.in_(chunk_ids)).all()
+
+
+# CRUD Operations for RetrievalLog
+class RetrievalLogCRUD:
+    @staticmethod
+    def create(
+        db: Session,
+        query: str,
+        chunks_used: Optional[List[int]] = None,
+        post_id: Optional[int] = None,
+        avg_score: Optional[float] = None,
+        min_score: Optional[float] = None,
+        max_score: Optional[float] = None,
+        retrieval_type: str = "hybrid"
+    ) -> RetrievalLog:
+        """Create a retrieval log entry."""
+        import json
+        log = RetrievalLog(
+            query=query,
+            chunks_used=json.dumps(chunks_used) if chunks_used else None,
+            post_id=post_id,
+            avg_score=avg_score,
+            min_score=min_score,
+            max_score=max_score,
+            retrieval_type=retrieval_type
+        )
+        db.add(log)
+        db.commit()
+        db.refresh(log)
+        return log
+
+    @staticmethod
+    def get_recent(db: Session, limit: int = 100) -> List[RetrievalLog]:
+        """Get recent retrieval logs."""
+        return db.query(RetrievalLog).order_by(RetrievalLog.created_at.desc()).limit(limit).all()

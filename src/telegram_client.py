@@ -33,9 +33,88 @@ class TelegramClient:
         # State for waiting for responses
         self.waiting_for_text = False
         self.waiting_for_feedback = False
+        self.waiting_for_topic = False
         self.received_text = None
         self.received_feedback = None
+        self.received_topic = None
         self.response_event = asyncio.Event()
+        self.topic_event = asyncio.Event()
+    
+    async def ask_for_topic(self, context_preview: str = "") -> str:
+        """
+        Ask user what the post should be about via Telegram.
+        
+        Args:
+            context_preview: Preview of available RAG context
+            
+        Returns:
+            User's topic/direction for the post
+        """
+        # Build message
+        message = "📝 **What should this post be about?**\n\n"
+        
+        if context_preview:
+            message += f"Available context:\n```\n{context_preview[:300]}...\n```\n\n"
+        
+        message += "Reply with your topic, angle, or key points you want to highlight.\n\n"
+        message += "Examples:\n"
+        message += "• 'Focus on the holographic technology'\n"
+        message += "• 'Emphasize preserving family memories'\n"
+        message += "• 'Talk about AI interaction features'"
+        
+        # Send message
+        await self.bot.send_message(
+            chat_id=self.chat_id,
+            text=message,
+            parse_mode="Markdown"
+        )
+        
+        console.print("\n[cyan]Sent topic request to Telegram. Waiting for your response...[/cyan]")
+        
+        # Wait for user's response
+        self.waiting_for_topic = True
+        self.received_topic = None
+        self.topic_event.clear()
+        
+        # Start listening for messages
+        app = Application.builder().token(self.bot_token).build()
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_topic_response))
+        
+        # Start polling to receive messages
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling()
+        
+        # Wait for response (with timeout)
+        try:
+            await asyncio.wait_for(self.topic_event.wait(), timeout=300.0)  # 5 min timeout
+        except asyncio.TimeoutError:
+            console.print("[yellow]Timeout waiting for topic. Using default.[/yellow]")
+            self.received_topic = "Create an engaging post about the content"
+        
+        # Cleanup
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+        
+        self.waiting_for_topic = False
+        return self.received_topic or "Create an engaging post about the content"
+    
+    async def _handle_topic_response(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle user's topic response."""
+        if not self.waiting_for_topic:
+            return
+        
+        if update.message and update.message.text:
+            self.received_topic = update.message.text
+            self.waiting_for_topic = False
+            self.topic_event.set()
+            
+            # Send acknowledgment
+            await update.message.reply_text(
+                "✅ Got it! Generating your post now...",
+                parse_mode="Markdown"
+            )
     
     async def send_post_for_approval(
         self,
@@ -217,6 +296,53 @@ class TelegramClient:
             chat_id=self.chat_id,
             text="Post cancelled. Nothing was published."
         )
+    
+    async def send_reply_for_approval(
+        self,
+        original_post: str,
+        reply_text: str,
+        post_author: str = "",
+        iteration: int = 1
+    ):
+        """
+        Send a reply for approval via Telegram.
+        
+        Args:
+            original_post: The original post being replied to
+            reply_text: The generated reply text
+            post_author: Author of the original post
+            iteration: Iteration number
+        """
+        keyboard = [
+            [InlineKeyboardButton("Approve & Post", callback_data="approve")],
+            [
+                InlineKeyboardButton("Edit Text", callback_data="edit_text"),
+                InlineKeyboardButton("Regen Text", callback_data="regen_text")
+            ],
+            [InlineKeyboardButton("Cancel", callback_data="cancel")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        message = f"""Reply Preview (Iteration {iteration})
+
+Original Post by @{post_author}:
+{original_post[:200]}...
+
+Your Reply:
+{reply_text}
+
+Characters: {len(reply_text)}"""
+        
+        try:
+            await self.bot.send_message(
+                chat_id=self.chat_id,
+                text=message,
+                reply_markup=reply_markup
+            )
+            console.print("[cyan]Sent reply to Telegram. Waiting for approval...[/cyan]")
+        except Exception as e:
+            console.print(f"[red]Error sending reply to Telegram: {e}[/red]")
+            raise
 
 
 # Background bot for API usage

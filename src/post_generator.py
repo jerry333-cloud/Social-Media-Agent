@@ -12,6 +12,8 @@ from .notion_client import NotionClientWrapper
 from .llm_client import LLMClient
 from .mastodon_client import MastodonClient
 from .image_client import ImageClient
+from .rag.retriever import HybridRetriever
+from .rag.context_builder import ContextBuilder
 
 console = Console()
 
@@ -28,8 +30,18 @@ class PostGenerator:
             self.image_client = ImageClient()
         except ValueError:
             self.image_client = None  # No Replicate token configured
+        
+        try:
+            from .telegram_client import TelegramClient
+            self.telegram_client = TelegramClient()
+        except (ValueError, ImportError):
+            self.telegram_client = None  # Telegram not configured
+        
+        # Initialize RAG components
+        self.retriever = HybridRetriever()
+        self.context_builder = ContextBuilder()
     
-    def create_and_publish_post(
+    async def create_and_publish_post(
         self,
         dry_run: bool = False,
         with_image: bool = False,
@@ -65,23 +77,79 @@ class PostGenerator:
             border_style="blue"
         ))
         
-        # Step 2: Generate post using LLM
-        console.print("\n[bold]Step 2:[/bold] Generating social media post...")
+        # Step 2: Retrieve relevant context using RAG
+        console.print("\n[bold]Step 2:[/bold] Retrieving relevant context...")
         
-        # Combine title and content for better context
-        full_content = f"{notion_content.title}\n\n{notion_content.content}"
-        generated_post = self.llm_client.generate_post(full_content)
+        # Build query from Notion content
+        query = f"{notion_content.title} {notion_content.content[:200]}"
         
-        console.print("[green]✓ Post generated![/green]")
+        # Retrieve relevant chunks (lower threshold for small datasets)
+        self.retriever.score_threshold = 0.0  # Accept all results when we have few chunks
+        chunks, retrieval_success = self.retriever.retrieve(query=query, top_k=10)
         
-        # Step 3: Generate image (optional)
+        # Build context from retrieved chunks
+        context = ""
+        if chunks:
+            console.print(f"[green]✓ Retrieved {len(chunks)} relevant chunks[/green]")
+            context = self.context_builder.build(chunks[:2], include_metadata=False)
+            console.print(f"[dim]Context available: {len(context)} chars[/dim]")
+        else:
+            console.print("[yellow]⚠ No chunks retrieved, using Notion content[/yellow]")
+            context = f"{notion_content.title}\n\n{notion_content.content[:500]}"
+        
+        # Step 3: Ask user what the post should be about (via Telegram if enabled)
+        if use_telegram:
+            if not self.telegram_client:
+                console.print("[yellow]⚠ Telegram not configured, using automatic generation[/yellow]")
+                use_telegram = False
+            else:
+                console.print("\n[bold]Step 3:[/bold] Asking for post direction via Telegram...")
+                
+                # Show context preview
+                context_preview = context[:300] if context else notion_content.title
+                
+                user_topic = await self.telegram_client.ask_for_topic(context_preview)
+                console.print(f"[green]✓ Received topic:[/green] {user_topic}")
+            
+                # Step 4: Generate post based on user's topic
+                console.print("\n[bold]Step 4:[/bold] Generating post based on your direction...")
+                
+                # Combine user's topic with context
+                prompt = f"""Create a social media post about: {user_topic}
+
+Context to use:
+{context[:800]}
+
+Make it engaging, under 500 characters, with 2-3 hashtags."""
+        
+        if not use_telegram:
+            # CLI mode: generate automatically
+            console.print("\n[bold]Step 3:[/bold] Generating social media post...")
+            prompt = f"""Create a social media post about:
+
+{context[:800]}
+
+Make it engaging, under 500 characters, with 2-3 hashtags."""
+        
+        console.print(f"[dim]Prompt length: {len(prompt)} chars[/dim]")
+        generated_post = self.llm_client.generate_post(prompt)
+        console.print(f"[dim]Generated post length: {len(generated_post)} chars[/dim]")
+        
+        if generated_post:
+            console.print(f"[cyan]Generated content:[/cyan] {generated_post[:200]}...")
+        else:
+            console.print("[red]⚠ Generated post is EMPTY![/red]")
+        
+        console.print(f"[green]✓ Post generation complete! Length: {len(generated_post)} chars[/green]")
+        
+        # Step 5: Generate image (optional)
         image_path = None
         if with_image:
             image_path = self._generate_post_image(notion_content, generated_post)
         
-        # Step 4: Review and edit (Telegram or CLI)
+        # Step 6: Review and edit (Telegram or CLI)
         if use_telegram:
-            final_post, image_path = self._telegram_approval(
+            final_post, image_path = await self._telegram_approval(
                 notion_content,
                 generated_post,
                 image_path
@@ -93,8 +161,8 @@ class PostGenerator:
             console.print("[yellow]Post creation cancelled.[/yellow]")
             return False
         
-        # Step 5: Publish to Mastodon
-        console.print("\n[bold]Step 5:[/bold] Publishing to Mastodon...")
+        # Step 7: Publish to Mastodon
+        console.print("\n[bold]Step 7:[/bold] Publishing to Mastodon...")
         
         status = self.mastodon_client.post_status(
             final_post,
@@ -104,8 +172,8 @@ class PostGenerator:
         )
         
         if not dry_run and status:
-            # Step 6: Add comment to Notion (optional tracking)
-            console.print("\n[bold]Step 5:[/bold] Adding comment to Notion...")
+            # Step 7: Add comment to Notion (optional tracking)
+            console.print("\n[bold]Step 7:[/bold] Adding comment to Notion...")
             post_url = status.get('url', 'N/A')
             comment = f"Posted to Mastodon: {post_url}"
             if self.notion_client.add_comment(notion_content.id, comment):
@@ -152,7 +220,7 @@ class PostGenerator:
         
         return image_path
     
-    def _telegram_approval(
+    async def _telegram_approval(
         self,
         notion_content,
         generated_post: str,
@@ -169,17 +237,14 @@ class PostGenerator:
         Returns:
             Tuple of (final_post, final_image_path) or (None, None) if cancelled
         """
-        import asyncio
         from .hitl_approval import HITLApprovalLoop
         
         try:
             loop = HITLApprovalLoop()
-            final_post, final_image = asyncio.run(
-                loop.run_approval_loop(
-                    notion_content=notion_content,
-                    initial_text=generated_post,
-                    initial_image_path=image_path
-                )
+            final_post, final_image = await loop.run_approval_loop(
+                notion_content=notion_content,
+                initial_text=generated_post,
+                initial_image_path=image_path
             )
             return final_post, final_image
         except ValueError as e:

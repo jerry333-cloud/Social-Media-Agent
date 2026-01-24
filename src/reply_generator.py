@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 
 from .llm_client import LLMClient
 from .mastodon_client import MastodonClient
+from .rag.retriever import HybridRetriever
+from .rag.context_builder import ContextBuilder
 
 load_dotenv()
 
@@ -23,6 +25,10 @@ class ReplyGenerator:
         """Initialize required clients."""
         self.llm_client = LLMClient()
         self.mastodon_client = MastodonClient()
+        
+        # Initialize RAG components
+        self.retriever = HybridRetriever()
+        self.context_builder = ContextBuilder()
         
         # Load keywords from environment
         keywords_str = os.getenv("MASTODON_KEYWORDS", "")
@@ -62,10 +68,54 @@ class ReplyGenerator:
             console.print("[yellow]Cancelled.[/yellow]")
             return False
         
-        # Step 2: Generate replies using LLM
-        console.print("\n[bold]Step 2:[/bold] Generating replies...")
+        # Step 2: Generate replies using LLM with RAG
+        console.print("\n[bold]Step 2:[/bold] Generating replies with RAG context...")
         
-        replies = self.llm_client.generate_replies(posts, self.keywords)
+        replies = []
+        for post in posts:
+            try:
+                # Build query from original post + keywords
+                query = f"{post.get('plain_content', post['content'])[:300]} {' '.join(self.keywords)}"
+                
+                # Retrieve relevant context
+                chunks, retrieval_success = self.retriever.retrieve(query=query, top_k=10)
+                
+                if chunks and retrieval_success:
+                    context = self.context_builder.build(chunks, include_metadata=True)
+                    
+                    # Generate reply with context
+                    prompt = f"""Based on the following context, generate a brief, friendly reply to this social media post.
+
+Context:
+{context}
+
+Post by @{post['author']}:
+{post.get('plain_content', post['content'])[:300]}
+
+Create a SHORT reply (max 200 characters) that:
+- Is relevant and adds value based on the context
+- Is friendly and professional
+- Relates to keywords: {', '.join(self.keywords)}
+
+Just write the reply text, nothing else."""
+                    
+                    reply_text = self.llm_client.generate_post(prompt)
+                else:
+                    # Fallback: use original method
+                    reply_text = self.llm_client.generate_reply_single(post, self.keywords)['reply_text']
+                
+                replies.append({
+                    "post_id": post["id"],
+                    "reply_text": reply_text[:280],
+                    "tone": "friendly"
+                })
+                
+            except Exception as e:
+                console.print(f"[yellow]Error generating reply for post {post['id']}: {e}[/yellow]")
+                # Fallback to original method
+                reply = self.llm_client.generate_reply_single(post, self.keywords)
+                if reply:
+                    replies.append(reply)
         
         if not replies:
             console.print("[red]Failed to generate replies.[/red]")

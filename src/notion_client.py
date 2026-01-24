@@ -20,11 +20,10 @@ class NotionClientWrapper:
         """Initialize the Notion client with API key from environment."""
         self.api_key = os.getenv("NOTION_API_KEY")
         self.page_id = os.getenv("NOTION_PAGE_ID")
+        self.database_id = os.getenv("NOTION_DATABASE_ID")
         
         if not self.api_key:
             raise ValueError("NOTION_API_KEY not found in environment variables")
-        if not self.page_id:
-            raise ValueError("NOTION_PAGE_ID not found in environment variables")
         
         self.client = Client(auth=self.api_key)
     
@@ -149,3 +148,76 @@ class NotionClientWrapper:
         except Exception as e:
             console.print(f"[yellow]Note: Could not add comment to Notion: {e}[/yellow]")
             return False
+    
+    def get_database_pages(self) -> List[Dict]:
+        """
+        Fetch all pages from a Notion database.
+        
+        Returns:
+            List of page dictionaries with id, title, content, last_edited_time
+        """
+        if not self.database_id:
+            # Fallback to single page if database not configured
+            if self.page_id:
+                page = self.get_content()
+                if page:
+                    return [{
+                        'id': page.id,
+                        'title': page.title,
+                        'content': page.content,
+                        'last_edited_time': None  # Would need to fetch from API
+                    }]
+            return []
+        
+        try:
+            pages = []
+            has_more = True
+            start_cursor = None
+            
+            while has_more:
+                if start_cursor:
+                    response = self.client.databases.query(
+                        database_id=self.database_id,
+                        start_cursor=start_cursor
+                    )
+                else:
+                    response = self.client.databases.query(
+                        database_id=self.database_id
+                    )
+                
+                for page in response.get("results", []):
+                    page_id = page["id"]
+                    title = ""
+                    
+                    # Extract title from properties
+                    properties = page.get("properties", {})
+                    for title_prop in ["Name", "Title", "title", "name"]:
+                        if title_prop in properties:
+                            prop = properties[title_prop]
+                            if prop["type"] == "title" and prop["title"]:
+                                title = "".join([text["plain_text"] for text in prop["title"]])
+                                break
+                    
+                    # Get content
+                    content = self._get_page_content(page_id)
+                    
+                    # Get last edited time
+                    last_edited_time = page.get("last_edited_time")
+                    
+                    pages.append({
+                        'id': page_id,
+                        'title': title,
+                        'content': content,
+                        'last_edited_time': last_edited_time,
+                        'properties': properties
+                    })
+                
+                has_more = response.get("has_more", False)
+                start_cursor = response.get("next_cursor")
+            
+            console.print(f"[green]✓ Fetched {len(pages)} pages from database[/green]")
+            return pages
+            
+        except Exception as e:
+            console.print(f"[red]Error fetching database pages: {e}[/red]")
+            raise

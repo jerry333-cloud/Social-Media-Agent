@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
+import asyncio
 
 from src.database import init_db
 from src.schemas import HealthResponse, ErrorResponse
@@ -54,12 +55,48 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Telegram bot not started: {e}")
         # Don't raise - allow API to run without Telegram
     
+    # Initialize RAG system
+    try:
+        from src.rag.vector_store import VectorStore
+        from src.rag.embedder import Embedder
+        from src.rag.bm25_search import BM25Search
+        
+        # Initialize components (they'll create tables if needed)
+        VectorStore()
+        Embedder.get_instance()
+        BM25Search()
+        logger.info("RAG system initialized successfully")
+    except Exception as e:
+        logger.warning(f"RAG system initialization warning: {e}")
+        # Don't raise - allow API to run without RAG
+    
+    # Start listeners (if enabled)
+    try:
+        from src.listeners.manager import ListenerManager
+        import os
+        if os.getenv("MASTODON_STREAM_ENABLED", "true").lower() == "true" or os.getenv("NOTION_POLL_INTERVAL_MINUTES"):
+            listener_manager = ListenerManager()
+            app.state.listener_manager = listener_manager
+            asyncio.create_task(listener_manager.start_all())
+            logger.info("Listeners started successfully")
+    except Exception as e:
+        logger.warning(f"Listeners not started: {e}")
+        # Don't raise - allow API to run without listeners
+    
     logger.info("Social Media Agent API started successfully")
     
     yield
     
     # Shutdown
     logger.info("Shutting down Social Media Agent API...")
+    
+    # Stop listeners
+    try:
+        if hasattr(app.state, 'listener_manager'):
+            await app.state.listener_manager.stop_all()
+            logger.info("Listeners shut down successfully")
+    except Exception as e:
+        logger.error(f"Error shutting down listeners: {e}")
     
     try:
         from src.scheduler import shutdown_scheduler
@@ -146,6 +183,20 @@ async def root():
 app.include_router(posts.router, prefix="/api/posts", tags=["posts"])
 app.include_router(schedule.router, prefix="/api/schedules", tags=["schedules"])
 app.include_router(config.router, prefix="/api/config", tags=["config"])
+
+# Include RAG router if it exists
+try:
+    from src.api.routes import rag
+    app.include_router(rag.router, prefix="/api/rag", tags=["rag"])
+except ImportError:
+    pass  # RAG routes not created yet
+
+# Include listeners router if it exists
+try:
+    from src.api.routes import listeners
+    app.include_router(listeners.router, prefix="/api/listeners", tags=["listeners"])
+except ImportError:
+    pass  # Listener routes not created yet
 
 
 if __name__ == "__main__":
